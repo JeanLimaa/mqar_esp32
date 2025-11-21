@@ -179,7 +179,6 @@ void setup() {
 void loop() {
     client.poll();
     
-    // Simula dados de temperatura e umidade
     float temperature = dht.readTemperature();
     float humidity = dht.readHumidity();
     int gasLevel = digitalRead(MQ_DIGITAL);
