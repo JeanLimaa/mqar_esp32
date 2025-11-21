@@ -5,13 +5,21 @@
 
 #include <ArduinoWebsockets.h>
 
+#include <DHT.h>
+
+#define DHTPIN 15
+#define DHTTYPE DHT11
+#define MQ_DIGITAL 13
+
+DHT dht(DHTPIN, DHTTYPE);
+
 Preferences preferences;
 
 String deviceToken = "";
 
 WiFiManager wifiManager;
 
-const char* websockets_connection_string = "wss://websockets-gerenciamento-residuos.onrender.com/ws"; //Enter server adress
+const char* websockets_connection_string = "wss://websockets-gerenciamento-residuos.onrender.com/ws";
 using namespace websockets;
 WebsocketsClient client;
 
@@ -68,12 +76,19 @@ String loadToken() {
     return deviceToken;
 }
 
+void clearToken() {
+    preferences.begin("user_prefs", false);
+    preferences.remove("deviceToken");
+    preferences.end();
+    Serial.println("Token apagado da NVS!");
+}
+
 // Função para enviar dados com o token 
-void sendDataWithToken(float temperature, float humidity, float gasLevel) {
+void sendDataWithToken(float temperature, float humidity, int gasLevel) {
     String message = "{\"temperature\":\"" + String(temperature) + 
                      "\", \"humidity\":\"" + String(humidity) + 
                      "\", \"gasLevel\":\"" + String(gasLevel) + 
-                     "\", \"deviceToken\":\"" + deviceToken + "\"}";
+                     "\", \"deviceId\":\"" + deviceToken + "\"}";
 
     client.send(message);
     Serial.println("Dados enviados: " + message);
@@ -82,6 +97,9 @@ void sendDataWithToken(float temperature, float humidity, float gasLevel) {
 void setup() {
     Serial.begin(115200);
     preferences.begin("user_prefs", false);
+    
+    dht.begin();
+    pinMode(MQ_DIGITAL, INPUT);
     
     // Carrega o token salvo
     deviceToken = loadToken();
@@ -112,15 +130,28 @@ void setup() {
             }
         }
     } else {
-        // Tenta conectar automaticamente se o token estiver presente
+        // Existe token salvo, mas pode ter mudado o WiFi
+        Serial.println("Tentando conectar ao WiFi automaticamente...");
         WiFi.begin();
-        if (WiFi.waitForConnectResult() == WL_CONNECTED) {
-            Serial.println("Conectado ao WiFi automaticamente!");
-            Serial.print("Endereço IP: ");
-            Serial.println(WiFi.localIP());
-        } else {
-            Serial.println("Falha ao conectar automaticamente, abrindo o portal.");
+
+        if (WiFi.waitForConnectResult() != WL_CONNECTED) {
+            Serial.println("Falha ao conectar automaticamente.");
+            Serial.println("Abrindo portal para reconfigurar WiFi e Token...");
+
             wifiManager.startConfigPortal("ESP32-Config");
+
+            // Recupera o token fornecido
+            String token = custom_token.getValue();
+
+            // Se informado, salva
+            if (token != "") {
+                saveToken(token);
+                deviceToken = token;
+            }
+
+            Serial.println("Nova configuração concluída.");
+        } else {
+            Serial.println("Conectado ao WiFi automaticamente!");
         }
     }
 
@@ -149,9 +180,13 @@ void loop() {
     client.poll();
     
     // Simula dados de temperatura e umidade
-    float temperature = random(20, 35);
-    float humidity = random(30, 70);
-    float gasLevel = random(30, 70);
+    float temperature = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    int gasLevel = digitalRead(MQ_DIGITAL);
+    gasLevel = !gasLevel; // inverte logica, pois o sensor esta invertido. (ta retornando 0=Alerta e 1=Bom )
+
+    Serial.printf("Temp: %.2f  Hum: %.2f  MQ_D0: %d\n",
+                  temperature, humidity, gasLevel);
 
     // Envia dados se o token estiver presente e WiFi conectado
     if (WiFi.isConnected() && deviceToken != "") {
@@ -160,5 +195,5 @@ void loop() {
         Serial.println("Usuário não autenticado ou WiFi desconectado. Dados não enviados.");
     }
 
-    delay(2000); // Intervalo de envio de dados
+    delay(5000); // Intervalo de envio de dados
 }
